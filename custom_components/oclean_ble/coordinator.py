@@ -96,6 +96,7 @@ from .parser import (
     parse_t1_c3385w0_record,
     parse_y3p_stream_record,
 )
+from .program_utils import validate_program_steps
 from .protocol import UNKNOWN, DeviceProtocol, is_known_model, protocol_for_model
 from .session_group import combined_score, extend_group, is_group_continuation, new_group
 from .statistics import import_new_sessions
@@ -815,12 +816,10 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         return list(self._zone_history)
 
     async def async_set_brush_scheme(self, pnum: int) -> None:
-        """Connect and send the SetBrushScheme command (0206) to the device.
+        """Connect and send a preset SetBrushScheme command (0206) to the device.
 
-        Builds the BLE packet following APK AbstractC0002b.m28p() and sends it
-        via the device's write characteristic.  For schemes with more than 4 steps
-        the payload exceeds 20 bytes and is split into two GATT writes.
-        Called by the Brush Scheme select entity.
+        Looks up the preset steps for *pnum* from the model's scheme dict and
+        writes them.  Called by the Brush Scheme select entity.
         Raises ValueError for unknown pnums, BleakError on connection failure.
         """
         model_id = self.data.model_id if self.data else None
@@ -829,6 +828,28 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         if scheme is None:
             raise ValueError(f"Unknown scheme pnum {pnum} for model {model_id}")
         name, steps = scheme
+        await self._async_write_scheme(pnum, name, steps)
+
+    async def async_set_custom_scheme(self, pnum: int, steps: list[tuple[int, int]]) -> None:
+        """Send a user-defined brush scheme (arbitrary pnum + step list).
+
+        Unlike async_set_brush_scheme this does NOT require *pnum* to exist in a
+        preset dict — it writes whatever (gear, duration) steps are given, which
+        is what enables custom programmes.  Validates ranges and the 1-9 step
+        ceiling.  Raises ValueError on invalid input, BleakError on connection
+        failure.
+        """
+        validate_program_steps(steps)
+        await self._async_write_scheme(pnum, f"custom-{pnum}", steps)
+
+    async def _async_write_scheme(self, pnum: int, name: str, steps: list[tuple[int, int]]) -> None:
+        """Build the 0206 SetBrushScheme packet(s) for *steps* and write them.
+
+        Follows APK AbstractC0002b.m28p(); payloads over 20 bytes are split into
+        two GATT writes.  Subscribes to the notify chars first so any ACK is
+        logged, and waits briefly after the write so the device commits the
+        command before the connection drops.
+        """
         packets = _build_scheme_packets(pnum, steps)
 
         async def _action(client: BleakClient) -> None:

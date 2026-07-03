@@ -17,9 +17,11 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from .const import (
     CONF_DEVICE_NAME,
     CONF_MAC_ADDRESS,
+    CONF_MERGE_WINDOW,
     CONF_POLL_INTERVAL,
     CONF_POLL_WINDOWS,
     CONF_POST_BRUSH_COOLDOWN,
+    DEFAULT_MERGE_WINDOW,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_POST_BRUSH_COOLDOWN,
     DOMAIN,
@@ -154,6 +156,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     poll_windows = entry.options.get(CONF_POLL_WINDOWS, "")
     post_brush_cooldown_h = int(entry.options.get(CONF_POST_BRUSH_COOLDOWN, DEFAULT_POST_BRUSH_COOLDOWN))
+    merge_window_min = int(entry.options.get(CONF_MERGE_WINDOW, DEFAULT_MERGE_WINDOW))
 
     _LOGGER.info(
         "Oclean integration v%s starting: mac=%s name=%s (HA %s)",
@@ -176,6 +179,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         poll_interval,
         poll_windows=poll_windows,
         post_brush_cooldown_h=post_brush_cooldown_h,
+        merge_window_min=merge_window_min,
     )
 
     # Register coordinator and set up platforms *before* the first poll so that

@@ -345,6 +345,20 @@ _NOTIFY_CHARS: tuple[str, ...] = UNKNOWN.notify_chars
 # DIS re-read interval: 24 h in seconds. Info only changes after firmware updates.
 _DIS_REFRESH_INTERVAL = 86_400
 
+# Some session formats encode local wall time but have no timezone. Allow one
+# day of timezone/clock skew, while rejecting dates years into the future.
+_SESSION_FUTURE_TOLERANCE_S = 86_400
+
+
+def _valid_session_timestamp(value: Any) -> bool:
+    """Check dates before they reach snapshots, statistics or session events."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0 < value <= time.time() + _SESSION_FUTURE_TOLERANCE_S
+    )
+
+
 # Oclean GMT offset table (1-based, 33 entries) – from DateUtils.java / C3352g.java.
 # Used to map the local UTC offset to the tzIndex byte in the 0201 calibration command.
 _TZ_OFFSETS_MIN: tuple[int, ...] = (
@@ -427,6 +441,9 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         # Unix timestamp (seconds) of the newest session already imported into HA statistics.
         # Sessions with last_brush_time > this value are considered new.
         self._last_session_ts: int = 0
+        # Separate cursor: events/history/groups must not repeat when recorder is
+        # absent or a statistics import fails. Statistics retain their own cursor.
+        self._last_processed_session_ts: int = 0
         self._store_loaded: bool = False
 
         # User-controlled device settings (write-only; state persisted locally).
@@ -486,6 +503,9 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         # Load persisted session timestamp on first poll
         if not self._store_loaded:
             await self._load_store()
+
+        if self._repair_session_state():
+            await self._save_store()
 
         # Smart polling: skip BLE connection when outside a configured time window
         # or while the post-brush cooldown is active.
@@ -805,8 +825,8 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         scores = self._session_group["scores"]
         return {
             "sessions": len(scores),
-            "einzel_scores": scores,
-            "firmware_score_letzte": next((s for s in reversed(scores) if s is not None), None),
+            "individual_scores": list(scores),
+            "last_firmware_score": next((s for s in reversed(scores) if s is not None), None),
             "start_ts": self._session_group.get("start_ts"),
         }
 
@@ -835,10 +855,12 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
 
         Unlike async_set_brush_scheme this does NOT require *pnum* to exist in a
         preset dict — it writes whatever (gear, duration) steps are given, which
-        is what enables custom programmes.  Validates ranges and the 1-9 step
+        is what enables custom programmes.  Validates ranges and the 1-8 step
         ceiling.  Raises ValueError on invalid input, BleakError on connection
         failure.
         """
+        if not 0 <= pnum <= 255:
+            raise ValueError("programme number must be 0-255")
         validate_program_steps(steps)
         await self._async_write_scheme(pnum, f"custom-{pnum}", steps)
 
@@ -967,6 +989,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         stored = await self._store.async_load()
         if stored:
             self._last_session_ts = stored.get("last_session_ts", 0)
+            self._last_processed_session_ts = stored.get("last_processed_session_ts", self._last_session_ts)
             self._area_remind = stored.get("area_remind")
             self._over_pressure = stored.get("over_pressure")
             self._remind_switch = stored.get("remind_switch")
@@ -994,6 +1017,35 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
                 self._last_session_ts,
             )
         self._store_loaded = True
+        if self._repair_session_state():
+            await self._save_store()
+
+    def _repair_session_state(self) -> bool:
+        """Remove poisoned future sessions without deleting device configuration."""
+        repaired = False
+        for attr in ("_last_session_ts", "_last_processed_session_ts"):
+            ts = getattr(self, attr)
+            if ts and not _valid_session_timestamp(ts):
+                setattr(self, attr, 0)
+                repaired = True
+        ts = (self._last_raw or {}).get(DATA_LAST_BRUSH_TIME)
+        if ts is not None and not _valid_session_timestamp(ts):
+            for key in _SESSION_SNAPSHOT_KEYS:
+                self._last_raw.pop(key, None)
+            repaired = True
+        if self._session_group and not _valid_session_timestamp(self._session_group.get("start_ts")):
+            self._session_group = None
+            repaired = True
+        history = [entry for entry in self._zone_history if _valid_session_timestamp(entry.get("ts"))]
+        if len(history) != len(self._zone_history):
+            self._zone_history = history
+            repaired = True
+        if repaired:
+            self._cooldown_until = 0
+            self._log.warning(
+                "removed invalid persisted session dates; the next successful poll will recover session data"
+            )
+        return repaired
 
     async def _save_store(self) -> None:
         """Persist coordinator state to HA storage."""
@@ -1003,6 +1055,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         await self._store.async_save(
             {
                 "last_session_ts": self._last_session_ts,
+                "last_processed_session_ts": self._last_processed_session_ts,
                 "area_remind": self._area_remind,
                 "over_pressure": self._over_pressure,
                 "remind_switch": self._remind_switch,
@@ -1018,6 +1071,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
 
     async def _poll_device(self) -> dict[str, Any]:
         """Connect to the device, read data, then disconnect."""
+        self._repair_session_state()
         collected: dict[str, Any] = {}
 
         # Resolve a BLEDevice through HA's bluetooth layer (covers local adapters
@@ -1077,7 +1131,9 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         collected[DATA_LAST_POLL] = int(time.time())
 
         # Count new sessions before _import_new_sessions updates _last_session_ts
-        new_session_count = sum(1 for s in all_sessions if s.get(DATA_LAST_BRUSH_TIME, 0) > self._last_session_ts)
+        new_session_count = sum(
+            1 for s in all_sessions if s.get(DATA_LAST_BRUSH_TIME, 0) > self._last_processed_session_ts
+        )
 
         # Fire one event per NEW session (also for backfilled ones with their
         # historical timestamp) so automations can log every brushing session —
@@ -1087,7 +1143,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
             entry = getattr(self, "config_entry", None)
             for s in sorted(all_sessions, key=lambda x: x.get(DATA_LAST_BRUSH_TIME, 0)):
                 ts = s.get(DATA_LAST_BRUSH_TIME, 0)
-                if ts <= self._last_session_ts:
+                if ts <= self._last_processed_session_ts:
                     continue
                 score = s.get(DATA_LAST_BRUSH_SCORE)
                 duration = s.get(DATA_LAST_BRUSH_DURATION)
@@ -1146,6 +1202,11 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
                         "zones_emoji": zones_emoji,
                     },
                 )
+
+        if all_sessions:
+            self._last_processed_session_ts = max(
+                self._last_processed_session_ts, *(s.get(DATA_LAST_BRUSH_TIME, 0) for s in all_sessions)
+            )
 
         # Import new sessions into HA long-term statistics
         if all_sessions:
@@ -1255,9 +1316,9 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
         prevent a stale 5a00 push from overwriting a more-recent 0307 timestamp,
         merges fields into *collected*, and appends new sessions to *all_sessions*.
 
-        *flush_pending* flushes any complete 42-byte records already accumulated
-        in the *B# reassembly buffer.  Call it after the session-wait timeout to
-        recover records that arrived before the BLE connection is torn down.
+        *flush_pending* discards an incomplete transfer after the session-wait
+        timeout. Multi-record history is accepted only as a complete, validated
+        transfer. Non-Elite short inline replies retain their original core fields.
 
         Multi-packet reassembly (*B# format):
         OCLEANY3 sends session records split across multiple BLE packets: a
@@ -1279,6 +1340,9 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
             "buf": bytearray(),
             "expected": 0,
             "parse_fn": parse_t1_c3385w0_record,
+            "sender": None,
+            "discarding": False,
+            "inline_fallback": {},
         }
 
         # Magic header bytes for the *B# multi-packet format (after 0307 prefix).
@@ -1289,6 +1353,9 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
             if not parsed:
                 return
             incoming_ts = parsed.get(DATA_LAST_BRUSH_TIME)
+            if incoming_ts is not None and not _valid_session_timestamp(incoming_ts):
+                _log.warning("ignored session with invalid timestamp %r", incoming_ts)
+                return
             # Only update collected when the incoming data is strictly newer than
             # what we already have.  Older timestamped sessions (e.g. from *B#
             # pagination) are appended to all_sessions for stats import but must
@@ -1304,104 +1371,126 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
                 all_sessions.append(dict(parsed))
                 session_received.set()
 
-        def _flush_t1_buffer() -> None:
-            """Parse all complete 42-byte records from the reassembly buffer."""
-            buf = bytes(_t1["buf"])
-            parse_fn = _t1["parse_fn"]
+        def _reset_t1_buffer() -> None:
             _t1["in_progress"] = False
             _t1["buf"] = bytearray()
             _t1["expected"] = 0
-            _t1["parse_fn"] = parse_t1_c3385w0_record
-            num_records = len(buf) // T1_C3352G_RECORD_SIZE
-            # OCLEANY3PD uses the APK Y3PD coverage threshold (10) instead of the
-            # default (9); all other TYPE1 models use the default.
-            _model = collected.get(DATA_MODEL_ID) or (self.data.model_id if self.data else None) or ""
-            norm_thr = AREA_COVERAGE_Y3PD_THRESHOLD if _model == "OCLEANY3PD" else AREA_COVERAGE_NORM_THRESHOLD
+            # Late raw continuation packets must not enter normal dispatch.
+            _t1["discarding"] = True
+
+        def _flush_t1_buffer() -> None:
+            """Accept a complete transfer atomically; never salvage shifted records."""
+            buf = bytes(_t1["buf"])
+            expected = _t1["expected"]
+            parse_fn = _t1["parse_fn"]
+            _reset_t1_buffer()
+            # A final 20-byte notification may contain padding or the beginning
+            # of the next record (observed on Y3M). Parse only the announced
+            # records; an overrun of a whole packet is not legitimate.
+            padding = buf[expected:]
+            if len(buf) < expected or len(padding) >= 20:
+                _log.warning("discarded malformed *B# transfer (%d/%d bytes)", len(buf), expected)
+                _accept(_t1["inline_fallback"])
+                return
+            num_records = expected // T1_C3352G_RECORD_SIZE
+            model = collected.get(DATA_MODEL_ID) or self._last_raw.get(DATA_MODEL_ID) or ""
+            norm_thr = AREA_COVERAGE_Y3PD_THRESHOLD if model == "OCLEANY3PD" else AREA_COVERAGE_NORM_THRESHOLD
+            records = [
+                parse_fn(
+                    buf[i * T1_C3352G_RECORD_SIZE : (i + 1) * T1_C3352G_RECORD_SIZE], coverage_norm_threshold=norm_thr
+                )
+                for i in range(num_records)
+            ]
+            if any(not _valid_session_timestamp(record.get(DATA_LAST_BRUSH_TIME)) for record in records):
+                _log.warning("discarded *B# transfer containing invalid or misaligned session records")
+                _accept(_t1["inline_fallback"])
+                return
             _log.debug("*B# reassembly complete: parsing %d record(s)", num_records)
-            for i in range(num_records):
-                chunk = buf[i * T1_C3352G_RECORD_SIZE : (i + 1) * T1_C3352G_RECORD_SIZE]
-                _accept(parse_fn(chunk, coverage_norm_threshold=norm_thr))
+            for record in records:
+                _accept(record)
 
         def handler(_sender: Any, raw: bytearray) -> None:
             data = bytes(raw)
+            source = getattr(_sender, "uuid", _sender)
             _log.debug("notification raw: %s", data.hex())
 
-            # --- Continuation packet for active *B# reassembly ---
-            # While reassembly is active, every incoming packet is treated as
-            # continuation data regardless of its first two bytes. Byte count
-            # is the only reliable discriminator: continuation chunks contain
-            # raw record bytes that can coincidentally match any known prefix.
-            if _t1["in_progress"]:
-                _t1["buf"].extend(data)
-                _log.debug(
-                    "*B# continuation: +%d bytes (%d/%d)",
-                    len(data),
-                    len(_t1["buf"]),
-                    _t1["expected"],
-                )
-                if len(_t1["buf"]) >= _t1["expected"]:
-                    _flush_t1_buffer()
-                return
-
-            # --- Normal notification dispatch ---
-            parsed = parse_notification(data)
-            _log.debug("notification parsed: %s", parsed)
-
-            # --- Check for *B# multi-packet header (0307 + *B# magic + count) ---
-            # payload[3:5] = record_count (2-byte BE).
-            # payload[5] = record byte 0 (year_base for OCLEANY3; 0x00 for OCLEANY3P).
-            # Both devices use the same *B# format; year_base=0x00 selects the Y3P parser.
-            if len(data) >= 8 and data[2:5] == _T1_MAGIC:
-                payload = data[2:]  # strip 0307 prefix
+            # A fresh header starts a new transfer, including after an incomplete
+            # burst. Match the command too, not just bytes inside arbitrary data.
+            if len(data) >= 8 and data[:2] == b"\x03\x07" and data[2:5] == _T1_MAGIC:
+                payload = data[2:]
                 record_count = (payload[3] << 8) | payload[4]
                 if record_count > 0:
-                    total_expected = record_count * T1_C3352G_RECORD_SIZE
-                    inline = bytearray(payload[5:])  # bytes already in this packet (from record byte 0)
-                    _t1["buf"] = inline
-                    _t1["expected"] = total_expected
-                    _t1["in_progress"] = True
+                    if _t1["in_progress"]:
+                        _log.warning("discarded incomplete *B# transfer before a new header")
+                    inline = bytearray(payload[5:])
+                    _t1.update(
+                        in_progress=True,
+                        buf=inline,
+                        expected=record_count * T1_C3352G_RECORD_SIZE,
+                        sender=source,
+                        discarding=False,
+                    )
+                    model = collected.get(DATA_MODEL_ID) or self._last_raw.get(DATA_MODEL_ID) or ""
+                    # Some non-Elite firmware uses count=1 for a short inline
+                    # session (see parser's documented inline format). Its first
+                    # 13 record bytes are in the original header and cannot have
+                    # shifted due to a missing continuation packet. Preserve
+                    # only these core fields if no valid full record follows.
+                    _t1["inline_fallback"] = (
+                        parse_notification(data) if record_count == 1 and not model.startswith("OCLEANY3P") else {}
+                    )
+                    if _t1["inline_fallback"] and len(payload) >= 16:
+                        scheduled = (payload[12] << 8) | payload[13]
+                        actual = (payload[14] << 8) | payload[15]
+                        if 0 < actual <= scheduled:
+                            _t1["inline_fallback"][DATA_LAST_BRUSH_DURATION] = actual
+                        if scheduled > 0:
+                            _t1["inline_fallback"][DATA_LAST_BRUSH_DURATION_SCHEDULED] = scheduled
                     if payload[5] == 0x00:
                         _t1["parse_fn"] = parse_y3p_stream_record
-                        _parser_name = "Y3P-stream"
-                    elif (collected.get(DATA_MODEL_ID) or "").startswith("OCLEANY3P"):
+                    elif model.startswith("OCLEANY3P"):
                         _t1["parse_fn"] = parse_t1_c3352g_record
-                        _parser_name = "C3352g (Y3P)"
                     else:
                         _t1["parse_fn"] = parse_t1_c3385w0_record
-                        _parser_name = "C3385w0 (Y3M/Y3)"
                     _log.debug(
-                        "*B# header: count=%d, expected=%d bytes, inline=%d bytes, parser=%s",
+                        "*B# header: count=%d, expected=%d bytes, inline=%d bytes",
                         record_count,
-                        total_expected,
+                        _t1["expected"],
                         len(inline),
-                        _parser_name,
                     )
-                    if len(inline) >= total_expected:
+                    if len(inline) >= _t1["expected"]:
                         _flush_t1_buffer()
-                    # parse_notification returned {} for this case (deferred branch);
-                    # do not call _accept – reassembly handles the data.
                     return
 
+            # Both fbb86 and fbb90 share this callback. Only the characteristic
+            # that sent the header may append raw bytes to that stream.
+            if source == _t1["sender"]:
+                if _t1["in_progress"]:
+                    _t1["buf"].extend(data)
+                    _log.debug("*B# continuation: +%d bytes (%d/%d)", len(data), len(_t1["buf"]), _t1["expected"])
+                    if len(_t1["buf"]) >= _t1["expected"]:
+                        _flush_t1_buffer()
+                    return
+                if _t1["discarding"]:
+                    return
+
+            parsed = parse_notification(data)
+            _log.debug("notification parsed: %s", parsed)
             _accept(parsed)
 
         def flush_pending() -> None:
-            """Flush any complete 42-byte records buffered so far.
+            """Discard incomplete transfers after the session wait.
 
-            Called after the BLE session-wait timeout to recover records that
-            arrived before the connection is torn down but before the full
-            expected byte count was reached (e.g. slow ESPHome BLE proxy).
+            A missing 20-byte packet shifts all subsequent 42-byte records;
+            parsing only the complete-looking prefix can invent a future session.
+            Keep the last valid snapshot and retry on the next poll instead.
             """
-            if _t1["in_progress"] and _t1["buf"]:
-                available = len(_t1["buf"])
-                complete = (available // T1_C3352G_RECORD_SIZE) * T1_C3352G_RECORD_SIZE
-                _log.debug(
-                    "*B# partial flush: %d/%d bytes, flushing %d complete record(s)",
-                    available,
-                    _t1["expected"],
-                    available // T1_C3352G_RECORD_SIZE,
-                )
-                _t1["expected"] = complete  # limit flush to complete records only
-                _flush_t1_buffer()
+            if _t1["in_progress"]:
+                _log.warning("discarded incomplete *B# transfer (%d/%d bytes)", len(_t1["buf"]), _t1["expected"])
+                inline_only = len(_t1["buf"]) == 13
+                _reset_t1_buffer()
+                if inline_only:
+                    _accept(_t1["inline_fallback"])
 
         return handler, flush_pending
 
@@ -1446,7 +1535,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
             await self._send_query_commands(client, session_received, notify_wait=BLE_NOTIFICATION_WAIT_NO_SUB)
 
         # If the session-wait timed out while a *B# stream was mid-flight (e.g.
-        # slow ESPHome proxy), flush whatever complete records arrived so far.
+        # slow ESPHome proxy), discard it rather than parse potentially shifted records.
         flush_pending()
         # Fallback for devices (e.g. OCLEANA1) where READ_NOTIFY_CHAR_UUID has no
         # CCCD and cannot be subscribed; poll the characteristic directly instead.
@@ -1802,7 +1891,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
                 current_hex = data.hex()
                 self._log.debug("READ fallback attempt %d: %s", attempt + 1, current_hex)
                 if len(data) > 2 and current_hex != last_hex:
-                    handler(None, bytearray(data))
+                    handler(READ_NOTIFY_CHAR_UUID, bytearray(data))
                     last_hex = current_hex
                 elif current_hex == last_hex:
                     self._log.debug("READ fallback: same data as previous read, stopping")
@@ -1852,7 +1941,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
                         BLE_POLL_FALLBACK_ATTEMPTS,
                         hex_str,
                     )
-                    handler(None, bytearray(data))
+                    handler(RECEIVE_BRUSH_UUID, bytearray(data))
                 elif len(data) <= 2:
                     self._log.debug(
                         "poll fallback fbb90 [%d/%d]: too short (%d B)",
@@ -1881,7 +1970,7 @@ class OcleanCoordinator(DataUpdateCoordinator[OcleanDeviceData]):
                         BLE_POLL_FALLBACK_ATTEMPTS,
                         hex86,
                     )
-                    handler(None, bytearray(data86))
+                    handler(READ_NOTIFY_CHAR_UUID, bytearray(data86))
             except Exception:  # noqa: BLE001
                 pass  # fbb86 READ failures are expected on some devices
 

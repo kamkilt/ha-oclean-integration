@@ -2308,10 +2308,10 @@ class TestT1StreamTruncationRobustness:
         # Misaligned tail: same timestamp as rec2 but garbage score 24.
         garbage = _make_c3352g_record_bytes(month=3, day=2, hour=7, minute=0, second=0, duration=120, score=24)
         result = await self._poll_records(coordinator, [rec1, rec2, garbage], count_override=5)
-        assert result[DATA_LAST_BRUSH_SCORE] == 98  # real value kept, not clobbered by 24
-        import datetime
-
-        assert datetime.datetime.fromtimestamp(result[DATA_LAST_BRUSH_TIME]).day == 2
+        # The header's count was not satisfied. A full-looking prefix is not
+        # evidence of alignment after packet loss, so discard the entire burst.
+        assert result.get(DATA_LAST_BRUSH_TIME) is None
+        assert result.get(DATA_LAST_BRUSH_SCORE) is None
 
     @pytest.mark.asyncio
     async def test_complete_stream_keeps_all_records(self):

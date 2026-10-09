@@ -407,10 +407,10 @@ class OcleanToothAreaSensor(OcleanEntity, SensorEntity):
 
 
 class OcleanDurationRatingSensor(OcleanEntity, SensorEntity):
-    """Sensor showing how well the target brushing duration (240 s) was met.
+    """Sensor showing completion of the programme used for the last session.
 
-    State: percentage 0-100 (capped), calculated as round(duration / 240 * 100).
-    Source: APK MineReportModel.java — timeLongRatio = timeLong / 240.0.
+    Divide real brushed time by that session's scheduled duration. Devices that
+    do not provide a scheduled duration retain the legacy 240-second fallback.
     """
 
     _attr_translation_key = DATA_DURATION_RATIO
@@ -428,7 +428,9 @@ class OcleanDurationRatingSensor(OcleanEntity, SensorEntity):
         duration = self.coordinator.data.get(DATA_LAST_BRUSH_DURATION)
         if duration is None:
             return None
-        return min(100, round(int(duration) / _TARGET_DURATION_S * 100))
+        scheduled = self.coordinator.data.get(DATA_LAST_BRUSH_DURATION_SCHEDULED)
+        target = scheduled if scheduled is not None and scheduled > 0 else _TARGET_DURATION_S
+        return max(0, min(100, round(int(duration) / target * 100)))
 
     @property
     def available(self) -> bool:

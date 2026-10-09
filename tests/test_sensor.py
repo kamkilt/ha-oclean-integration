@@ -13,6 +13,7 @@ from custom_components.oclean_ble.const import (
     DATA_LAST_BRUSH_AREAS,
     DATA_LAST_BRUSH_COVERAGE,
     DATA_LAST_BRUSH_DURATION,
+    DATA_LAST_BRUSH_DURATION_SCHEDULED,
     DATA_LAST_BRUSH_GESTURE_ARRAY,
     DATA_LAST_BRUSH_GESTURE_CODE,
     DATA_LAST_BRUSH_PNUM,
@@ -740,3 +741,14 @@ class TestOcleanRssiSensorScannerNames:
         monkeypatch.setattr(bluetooth, "async_scanner_devices_by_address", MagicMock(return_value=[device]))
 
         assert sensor.extra_state_attributes["by_scanner"] == {"?": -66}
+
+
+@pytest.mark.parametrize(
+    ("actual", "scheduled", "expected"),
+    [(180, 180, 100), (134, 180, 74), (120, 120, 100), (200, 180, 100), (0, 180, 0), (120, 0, 50)],
+)
+def test_duration_rating_uses_the_session_programme(actual, scheduled, expected):
+    sensor = _make_duration_rating_sensor(
+        data={DATA_LAST_BRUSH_DURATION: actual, DATA_LAST_BRUSH_DURATION_SCHEDULED: scheduled}
+    )
+    assert sensor.native_value == expected

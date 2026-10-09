@@ -158,16 +158,11 @@ class TestOcleanY3PStreamSession:
         assert result.get(DATA_LAST_BRUSH_TIME) is None
 
     @pytest.mark.asyncio
-    async def test_flush_pending_recovers_complete_record_from_truncated_stream(self):
-        """flush_pending rescues a complete record when a multi-record stream is truncated.
+    async def test_flush_pending_discards_truncated_stream(self):
+        """Never salvage complete-looking records from a truncated stream.
 
-        Scenario (slow ESPHome BLE proxy):
-          - Device announces 2 records → total_expected = 84 bytes.
-          - Record 1 arrives fully (42 bytes in buffer) but no auto-flush because
-            expected is still 84.
-          - Record 2 starts arriving (20 bytes) then the session-wait times out.
-          - flush_pending() is called: floor(62/42)*42 = 42 → record 1 is parsed.
-          - Result: session data from record 1 is present despite the truncation.
+        A missing middle packet shifts later records, so the complete transfer
+        must arrive before any record is accepted, even with an ESPHome proxy.
         """
         record1 = bytearray(42)
         record1[0] = 0x00
@@ -205,8 +200,8 @@ class TestOcleanY3PStreamSession:
         )
         result = await run_poll(_coordinator(), client)
 
-        assert result.get(DATA_LAST_BRUSH_DURATION) == 120
-        assert result.get(DATA_LAST_BRUSH_SCORE) == 85
+        assert result.get(DATA_LAST_BRUSH_DURATION) is None
+        assert result.get(DATA_LAST_BRUSH_SCORE) is None
 
     @pytest.mark.asyncio
     async def test_incomplete_stream_no_session(self):

@@ -1,6 +1,6 @@
 {
-    "name": "Oclean Toothbrush (unofficial)",
-    "content_in_root": false,
-    "render_readme": true,
-    "homeassistant": "2023.4.0"
+  "name": "Oclean Toothbrush (kamkilt fork)",
+  "content_in_root": false,
+  "render_readme": true,
+  "homeassistant": "2023.4.0"
 }

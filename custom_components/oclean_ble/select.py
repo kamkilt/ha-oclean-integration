@@ -82,7 +82,7 @@ class OcleanSchemeSelect(OcleanEntity, SelectEntity):
 
     def _custom_programs(self) -> dict[int, dict]:
         """Return the global custom programmes {pnum: {"name","steps"}} (or {})."""
-        store = self.hass.data.get(DOMAIN, {}).get("_programs")
+        store = self.coordinator.hass.data.get(DOMAIN, {}).get("_programs")
         if store is None:
             return {}
         return store.list()
@@ -90,11 +90,7 @@ class OcleanSchemeSelect(OcleanEntity, SelectEntity):
     async def async_added_to_hass(self) -> None:
         """Refresh options + attributes whenever the global programme store changes."""
         await super().async_added_to_hass()
-        self.async_on_remove(
-            async_dispatcher_connect(
-                self.hass, SIGNAL_PROGRAMS_UPDATED, self.async_write_ha_state
-            )
-        )
+        self.async_on_remove(async_dispatcher_connect(self.hass, SIGNAL_PROGRAMS_UPDATED, self.async_write_ha_state))
 
     @property
     def available(self) -> bool:
@@ -158,10 +154,10 @@ class OcleanSchemeSelect(OcleanEntity, SelectEntity):
             await self.coordinator.async_set_custom_scheme(pnum, steps)
             self.async_write_ha_state()
             return
-        pnum = name_to_pnum.get(option)
-        if pnum is None:
+        selected_pnum = name_to_pnum.get(option)
+        if selected_pnum is None:
             return
-        await self.coordinator.async_set_brush_scheme(pnum)
+        await self.coordinator.async_set_brush_scheme(selected_pnum)
         self.async_write_ha_state()
 
     @property

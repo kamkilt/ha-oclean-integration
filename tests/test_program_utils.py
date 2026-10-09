@@ -31,7 +31,7 @@ def test_next_free_pnum_accepts_str_keys():
 
 def test_next_free_pnum_exhausted_raises():
     full = list(range(MIN_CUSTOM_PNUM, MAX_CUSTOM_PNUM + 1))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=".+"):
         next_free_pnum(full)
 
 
@@ -44,22 +44,22 @@ def test_validate_max_steps_ok():
 
 
 def test_validate_empty_raises():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=".+"):
         validate_program_steps([])
 
 
 def test_validate_too_many_steps_raises():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=".+"):
         validate_program_steps([(2, 30)] * (MAX_CUSTOM_STEPS + 1))
 
 
 @pytest.mark.parametrize("gear", [0, 42, -1, 100])
 def test_validate_bad_gear_raises(gear):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=".+"):
         validate_program_steps([(gear, 30)])
 
 
 @pytest.mark.parametrize("dur", [0, 256, -5])
 def test_validate_bad_duration_raises(dur):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=".+"):
         validate_program_steps([(8, dur)])

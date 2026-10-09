@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Oclean Toothbrush (unofficial)",
+        "title": "Oclean Toothbrush (kamkilt fork)",
         "description": "Set up your Oclean Smart Toothbrush. Nearby devices will be listed automatically if Bluetooth is enabled."
       },
       "pick_device": {
@@ -44,6 +44,11 @@
     }
   },
   "entity": {
+    "image": {
+      "brush_coverage": {
+        "name": "Brush Coverage"
+      }
+    },
     "button": {
       "reset_brush_head": {
         "name": "Reset Brush Head"
@@ -63,6 +68,15 @@
     "switch": {
       "area_remind": {
         "name": "Area Reminder"
+      },
+      "over_pressure": {
+        "name": "Over-Pressure Alert"
+      },
+      "remind_switch": {
+        "name": "Brushing Reminder"
+      },
+      "running_switch": {
+        "name": "Auto Power-Off Timer"
       }
     },
     "number": {
@@ -76,6 +90,9 @@
       },
       "last_brush_score": {
         "name": "Score"
+      },
+      "last_brush_coverage": {
+        "name": "Coverage"
       },
       "last_brush_duration": {
         "name": "Duration"
@@ -106,22 +123,83 @@
       },
       "last_poll": {
         "name": "Last Poll"
+      },
+      "cleaned_zones": {
+        "name": "Cleaned Zones"
+      },
+      "last_scheme": {
+        "name": "Last Scheme"
+      },
+      "mac_address": {
+        "name": "MAC Address"
+      },
+      "rssi": {
+        "name": "Signal strength"
+      },
+      "duration_ratio": {
+        "name": "Duration Rating"
+      },
+      "last_brush_gesture_code": {
+        "name": "Gesture"
+      },
+      "last_brush_pressure_ratio": {
+        "name": "Pressure Detail"
+      },
+      "last_brush_pressure_code": {
+        "name": "Pressure Level"
+      },
+      "last_brush_power_array": {
+        "name": "Power Distribution"
+      },
+      "zone_upper_left_out": {
+        "name": "Zone Upper Left Out"
+      },
+      "zone_upper_left_in": {
+        "name": "Zone Upper Left In"
+      },
+      "zone_lower_left_out": {
+        "name": "Zone Lower Left Out"
+      },
+      "zone_lower_left_in": {
+        "name": "Zone Lower Left In"
+      },
+      "zone_upper_right_out": {
+        "name": "Zone Upper Right Out"
+      },
+      "zone_upper_right_in": {
+        "name": "Zone Upper Right In"
+      },
+      "zone_lower_right_out": {
+        "name": "Zone Lower Right Out"
+      },
+      "zone_lower_right_in": {
+        "name": "Zone Lower Right In"
+      },
+      "group_score": {
+        "name": "Merged score"
+      },
+      "group_duration": {
+        "name": "Merged duration"
       }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Oclean Options",
+        "title": "Oclean — kamkilt fork v1.4.1",
         "data": {
           "poll_interval": "Poll interval (seconds)",
           "post_brush_cooldown": "Post-brush cooldown (hours)",
-          "window_count": "Number of brushing time windows"
+          "window_count": "Number of brushing time windows",
+          "merge_window": "Merge sessions (minutes)",
+          "zone_history_days": "Zone history"
         },
         "data_description": {
           "poll_interval": "How often to poll the toothbrush over Bluetooth. Minimum 60 s. Set to 0 to disable automatic polling (manual only).",
           "post_brush_cooldown": "Pause polling for this many hours after a new brushing session is detected. Set to 0 to disable.",
-          "window_count": "Restrict polling to specific time windows (e.g. morning and evening brushing). Set to 0 to always poll."
+          "window_count": "Restrict polling to specific time windows (e.g. morning and evening brushing). Set to 0 to always poll.",
+          "merge_window": "Merge back-to-back brushing sessions (gap ≤ X minutes) into one group. The integration score is the capped sum of the run scores (max. 100 %). 0 = disabled.",
+          "zone_history_days": "Store every brushing session with its 8 per-zone times (for detail views). Older entries are pruned automatically."
         }
       },
       "window_1": {

@@ -1,5 +1,40 @@
 # Changelog
 
+## [v1.4.1] – 2026-10-09 (kamkilt fork)
+
+### Fixes
+
+- Reject incomplete or invalid multi-record BLE session transfers atomically,
+  instead of decoding shifted records after packet loss. A regression reproduces
+  the reported 25 December 2032 / 777-second Elite Pro reading from real bytes.
+- Keep reassembly tied to the characteristic that supplied the header, discard
+  late continuations after timeout and accept a fresh header on retry. Preserve
+  complete Y3M records with a partial next-record tail in their final packet.
+- Recover automatically from invalid future timestamps stored in session cursors
+  and snapshots, preserving device settings and clearing the polling cooldown.
+- Calculate Duration Rating against the programme duration recorded with the
+  session, using 240 seconds only as a fallback when it is unavailable.
+
+### Fork identification
+
+- Home Assistant and HACS display **Oclean Toothbrush (kamkilt fork)**; options
+  show the fork version and startup logs identify this build. README documents
+  ownership, fixes, all imported features and installation without recreating entries.
+
+### Features from PPP01
+
+- Coverage image with inner and outer tooth surfaces; colours follow relative
+  per-zone coverage rather than treating Elite Pro time values as pressure.
+- Named programmes shared across devices, plus save, delete and direct-write
+  actions. Programme-store updates are serialized and invalid steps rejected.
+- One brushing event per newly received session, including backfilled sessions.
+- Optional consecutive-session grouping with merged duration and capped score.
+- Optional local zone history with retention and a response-capable query action.
+- Separate event/history cursors from statistics import to avoid duplicate events
+  when the recorder is unavailable. Preserve current proxy cancellation handling,
+  action timeouts and nonblocking startup while integrating the feature branches.
+
+
 ## [v1.4.0] – 2026-09-19
 
 ### New Features

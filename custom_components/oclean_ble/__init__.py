@@ -30,8 +30,8 @@ from .const import (
     DEFAULT_POST_BRUSH_COOLDOWN,
     DEFAULT_ZONE_HISTORY,
     DOMAIN,
-    SERVICE_GET_ZONE_HISTORY,
     SERVICE_DELETE_CUSTOM_PROGRAM,
+    SERVICE_GET_ZONE_HISTORY,
     SERVICE_POLL,
     SERVICE_SAVE_CUSTOM_PROGRAM,
     SERVICE_SET_CUSTOM_SCHEME,
@@ -171,7 +171,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     zone_history_days = int(entry.options.get(CONF_ZONE_HISTORY, DEFAULT_ZONE_HISTORY))
 
     _LOGGER.info(
-        "Oclean integration v%s starting: mac=%s name=%s (HA %s)",
+        "Oclean integration v%s (kamkilt fork) starting: mac=%s name=%s (HA %s)",
         _INTEGRATION_VERSION,
         mac,
         device_name,
@@ -206,8 +206,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_data = hass.data.setdefault(DOMAIN, {})
     if "_programs" not in domain_data:
         program_store = CustomProgramStore(hass)
-        await program_store.async_load()
         domain_data["_programs"] = program_store
+    await domain_data["_programs"].async_load()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -347,9 +347,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN,
             SERVICE_DELETE_CUSTOM_PROGRAM,
             _handle_delete_custom_program,
-            schema=vol.Schema(
-                {vol.Required("pnum"): vol.All(vol.Coerce(int), vol.Range(min=120, max=255))}
-            ),
+            schema=vol.Schema({vol.Required("pnum"): vol.All(vol.Coerce(int), vol.Range(min=120, max=255))}),
         )
 
     # Initial poll: best-effort and NON-BLOCKING.  Awaiting async_refresh() here

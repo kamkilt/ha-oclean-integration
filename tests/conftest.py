@@ -79,11 +79,15 @@ def _install_ha_stubs() -> None:
     class ConfigEntryNotReady(Exception):
         pass
 
-    class ServiceValidationError(Exception):
+    class HomeAssistantError(Exception):
+        pass
+
+    class ServiceValidationError(HomeAssistantError):
         pass
 
     exc.ConfigEntryNotReady = ConfigEntryNotReady
     exc.ServiceValidationError = ServiceValidationError
+    exc.HomeAssistantError = HomeAssistantError
 
     # ---- homeassistant.util.dt ----
     import datetime as _dt
@@ -100,7 +104,7 @@ def _install_ha_stubs() -> None:
     def _as_timestamp(value):
         dt_obj = value if isinstance(value, _dt.datetime) else _parse_datetime(value)
         if dt_obj.tzinfo is None:
-            dt_obj = dt_obj.replace(tzinfo=_dt.timezone.utc)
+            dt_obj = dt_obj.replace(tzinfo=_dt.UTC)
         return dt_obj.timestamp()
 
     dt_util.parse_datetime = _parse_datetime
@@ -248,6 +252,9 @@ def _install_ha_stubs() -> None:
         def __class_getitem__(cls, item):
             return cls
 
+        def _handle_coordinator_update(self):
+            """No-op stand-in for HA's state refresh callback."""
+
         async def async_added_to_hass(self):
             """No-op stand-in for HA's coordinator subscription hook."""
 
@@ -260,6 +267,11 @@ def _install_ha_stubs() -> None:
     uc.DataUpdateCoordinator = DataUpdateCoordinator
     uc.CoordinatorEntity = CoordinatorEntity
     exc.UpdateFailed = UpdateFailed
+
+    # ---- homeassistant.helpers.dispatcher ----
+    dispatcher = _stub("homeassistant.helpers.dispatcher")
+    dispatcher.async_dispatcher_send = MagicMock()
+    dispatcher.async_dispatcher_connect = MagicMock(return_value=lambda: None)
 
     # ---- homeassistant.helpers.storage ----
     storage = _stub("homeassistant.helpers.storage")
@@ -491,7 +503,7 @@ def _install_ha_stubs() -> None:
         _attr_content_type = "image/png"
         _attr_image_last_updated = None
 
-        def __init__(self, hass=None, **kwargs):
+        def __init__(self, hass, **kwargs):
             self.hass = hass
 
     img.ImageEntity = ImageEntity

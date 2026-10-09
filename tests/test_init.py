@@ -364,7 +364,10 @@ class TestAsyncSetupEntry:
         registered = [(c[0][0], c[0][1]) for c in hass.services.async_register.call_args_list]
         assert (DOMAIN, SERVICE_POLL) in registered
         assert (DOMAIN, "get_zone_history") in registered
-        assert len(registered) == 2
+        assert len(registered) == 5
+        assert (DOMAIN, "set_custom_scheme") in registered
+        assert (DOMAIN, "save_custom_program") in registered
+        assert (DOMAIN, "delete_custom_program") in registered
 
     @patch("custom_components.oclean_ble._attach_file_handler", new_callable=AsyncMock)
     @patch("custom_components.oclean_ble.OcleanCoordinator")

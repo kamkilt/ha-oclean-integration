@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Cepillo Oclean (no oficial)",
+        "title": "Oclean Toothbrush (kamkilt fork)",
         "description": "Configura tu Cepillo Oclean Inteligente. Los dispositivos cercanos se mostrarán automáticamente si el Bluetooth está activado."
       },
       "pick_device": {
@@ -177,7 +177,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Opciones de Oclean",
+        "title": "Oclean — kamkilt fork v1.4.1",
         "data": {
           "poll_interval": "Intervalo de sondeo (segundos)",
           "post_brush_cooldown": "Tiempo de espera tras cepillado (horas)",

@@ -30,6 +30,7 @@ def _make_entity(
     coordinator = MagicMock()
     coordinator.data = _make_data(model_id, brush_mode) if model_id is not None else None
     coordinator.active_scheme_pnum = active_pnum
+    coordinator.hass.data = {}
     return OcleanSchemeSelect(coordinator, "AA:BB:CC:DD:EE:FF", "TestBrush")
 
 
@@ -140,7 +141,7 @@ class TestOptions:
 
     def test_y5_options_count(self):
         entity = _make_entity("OCLEANY5")
-        assert len(entity.options) == len(OCLEANY5_SCHEMES)
+        assert len(entity.options) == len({name for name, _ in OCLEANY5_SCHEMES.values()})
 
     def test_legacy_returns_empty_options(self):
         entity = _make_entity("OCLEANA1")

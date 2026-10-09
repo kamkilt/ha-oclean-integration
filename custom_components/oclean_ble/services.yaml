@@ -69,8 +69,8 @@ set_custom_scheme:
     steps:
       name: Steps
       description: >
-        Ordered list of 1-9 steps, each with a gear (1-41) and duration (1-255 s).
-        Ten or more steps exceed the BLE packet limit and are rejected.
+        Ordered list of 1-8 steps, each with a gear (1-41) and duration (1-255 s).
+        More than eight steps are rejected because firmware truncates longer schemes.
       required: true
       selector:
         object:
@@ -90,7 +90,7 @@ save_custom_program:
     steps:
       name: Steps
       description: >
-        Ordered list of 1-9 steps, each with a gear (1-41 Clean/Whitening/
+        Ordered list of 1-8 steps, each with a gear (1-41 Clean/Whitening/
         Massage) and a duration in seconds (1-255).
       required: true
       selector:

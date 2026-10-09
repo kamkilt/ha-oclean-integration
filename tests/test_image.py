@@ -1,182 +1,112 @@
-"""Tests for the Oclean brush coverage image entity."""
+"""Verify the PPP01 dental diagram and Elite Pro's relative zone colours."""
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
 
 import pytest
 
-from custom_components.oclean_ble.const import (
-    DATA_LAST_BRUSH_AREAS,
-    DATA_LAST_BRUSH_TIME,
-    TOOTH_AREA_NAMES,
-)
-from custom_components.oclean_ble.image import (
-    OcleanBrushCoverageImage,
-    _generate_svg,
-    _pressure_to_color,
-)
-
-# ---------------------------------------------------------------------------
-# _pressure_to_color
-# ---------------------------------------------------------------------------
+from custom_components.oclean_ble.const import DATA_LAST_BRUSH_AREAS, DATA_LAST_BRUSH_TIME, TOOTH_AREA_NAMES
+from custom_components.oclean_ble.image import OcleanBrushCoverageImage, _generate_svg, _zone_colors, async_setup_entry
 
 
-class TestPressureToColor:
-    """Map raw 0-255 pressure to CSS colour string."""
-
-    def test_zero_returns_none(self) -> None:
-        assert _pressure_to_color(0) is None
-
-    def test_negative_returns_none(self) -> None:
-        assert _pressure_to_color(-1) is None
-
-    def test_low_pressure_green(self) -> None:
-        assert _pressure_to_color(40) == "#4CAF50"
-
-    def test_medium_pressure_orange(self) -> None:
-        assert _pressure_to_color(120) == "#FF9800"
-
-    def test_high_pressure_red(self) -> None:
-        assert _pressure_to_color(200) == "#F44336"
-
-    def test_max_pressure_red(self) -> None:
-        assert _pressure_to_color(255) == "#F44336"
-
-    def test_boundary_80_is_green(self) -> None:
-        assert _pressure_to_color(80) == "#4CAF50"
-
-    def test_boundary_81_is_orange(self) -> None:
-        assert _pressure_to_color(81) == "#FF9800"
-
-    def test_boundary_160_is_orange(self) -> None:
-        assert _pressure_to_color(160) == "#FF9800"
-
-    def test_boundary_161_is_red(self) -> None:
-        assert _pressure_to_color(161) == "#F44336"
+def _entity(areas=None, ts=1700000000):
+    coordinator = MagicMock()
+    coordinator.data = {DATA_LAST_BRUSH_AREAS: areas, DATA_LAST_BRUSH_TIME: ts}
+    coordinator.hass.data = {}
+    return OcleanBrushCoverageImage(coordinator, "AA:BB:CC:DD:EE:FF", "Oclean")
 
 
-# ---------------------------------------------------------------------------
-# _generate_svg
-# ---------------------------------------------------------------------------
+class TestCoverageSvg:
+    def test_valid_svg_has_32_teeth_and_two_jaws(self):
+        svg = _generate_svg(dict.fromkeys(TOOTH_AREA_NAMES, 15))
+        root = ET.fromstring(svg)
+        assert root.tag == "{http://www.w3.org/2000/svg}svg"
+        assert len(root.findall("{http://www.w3.org/2000/svg}circle")) == 32
+        assert len(root.findall("{http://www.w3.org/2000/svg}path")) == 64
+        assert len(svg) < 15000
 
-
-class TestGenerateSvg:
-    """Test SVG generation."""
-
-    @staticmethod
-    def _mixed_areas() -> dict[str, int]:
-        return {
-            "upper_left_out": 120,
-            "upper_left_in": 0,
-            "lower_left_out": 30,
-            "lower_left_in": 60,
-            "upper_right_out": 45,
-            "upper_right_in": 200,
-            "lower_right_out": 0,
-            "lower_right_in": 95,
-        }
-
-    def test_returns_valid_svg(self) -> None:
-        svg = _generate_svg(dict.fromkeys(TOOTH_AREA_NAMES, 50))
-        assert svg.startswith("<svg")
-        assert svg.strip().endswith("</svg>")
-
-    def test_contains_namespace(self) -> None:
-        svg = _generate_svg(dict.fromkeys(TOOTH_AREA_NAMES, 0))
-        assert 'xmlns="http://www.w3.org/2000/svg"' in svg
-
-    def test_zero_pressure_no_colour_overlay(self) -> None:
-        svg = _generate_svg(dict.fromkeys(TOOTH_AREA_NAMES, 0))
+    def test_empty_zones_remain_grey(self):
+        svg = _generate_svg({})
         assert "#4CAF50" not in svg
         assert "#FF9800" not in svg
         assert "#F44336" not in svg
 
-    def test_mixed_pressures_contain_colours(self) -> None:
-        svg = _generate_svg(self._mixed_areas())
-        assert "#4CAF50" in svg  # green (low pressure zones)
-        assert "#FF9800" in svg  # orange (medium pressure zones)
-        assert "#F44336" in svg  # red (high pressure zone)
+    def test_elite_pro_time_distribution_is_not_mistaken_for_pressure(self):
+        colors = _zone_colors(dict.fromkeys(TOOTH_AREA_NAMES, 200))
+        assert set(colors.values()) == {"#4CAF50"}
 
-    def test_all_max_pressure_only_red(self) -> None:
-        svg = _generate_svg(dict.fromkeys(TOOTH_AREA_NAMES, 255))
-        assert "#F44336" in svg
-        assert "#4CAF50" not in svg
+    def test_rating_matches_history_and_is_unit_independent(self):
+        areas = dict(zip(TOOTH_AREA_NAMES, [0, 1, 5, 15, 15, 15, 15, 14], strict=True))
+        colors = _zone_colors(areas)
+        assert colors[TOOTH_AREA_NAMES[0]] is None
+        assert colors[TOOTH_AREA_NAMES[1]] == "#F44336"
+        assert colors[TOOTH_AREA_NAMES[2]] == "#FF9800"
+        assert colors[TOOTH_AREA_NAMES[3]] == "#4CAF50"
+        assert _zone_colors({k: v * 10 for k, v in areas.items()}) == colors
 
-    def test_empty_dict(self) -> None:
-        svg = _generate_svg({})
-        assert svg.startswith("<svg")
-
-    def test_contains_labels(self) -> None:
-        svg = _generate_svg(dict.fromkeys(TOOTH_AREA_NAMES, 0))
-        assert ">L</text>" in svg
-        assert ">R</text>" in svg
-
-    def test_size_is_small(self) -> None:
-        svg = _generate_svg(self._mixed_areas())
-        assert len(svg) < 15000  # should be well under 15 KB
+    def test_labels_and_colour_overlays_exist(self):
+        svg = _generate_svg(dict(zip(TOOTH_AREA_NAMES, [0, 1, 5, 15, 15, 15, 15, 14], strict=True)))
+        for fragment in [">L</text>", ">R</text>", "#4CAF50", "#FF9800", "#F44336"]:
+            assert fragment in svg
 
 
-# ---------------------------------------------------------------------------
-# OcleanBrushCoverageImage entity
-# ---------------------------------------------------------------------------
-
-
-class TestOcleanBrushCoverageImage:
-    """Test the image entity behaviour."""
-
-    @staticmethod
-    def _make_entity(coordinator_data: dict | None = None) -> OcleanBrushCoverageImage:
-        coordinator = MagicMock()
-        coordinator.data = coordinator_data
-        coordinator.last_update_success = True
-        coordinator.hass = MagicMock()
-        return OcleanBrushCoverageImage(coordinator, "AA:BB:CC:DD:EE:FF", "Test Oclean")
-
-    def test_unique_id(self) -> None:
-        entity = self._make_entity()
+class TestCoverageImageEntity:
+    def test_initial_image_has_timestamp_and_correct_identity(self):
+        entity = _entity(dict.fromkeys(TOOTH_AREA_NAMES, 10))
         assert entity._attr_unique_id == "AA:BB:CC:DD:EE:FF_brush_coverage"
-
-    def test_translation_key(self) -> None:
-        entity = self._make_entity()
         assert entity._attr_translation_key == "brush_coverage"
-
-    def test_content_type_is_svg(self) -> None:
-        entity = self._make_entity()
         assert entity._attr_content_type == "image/svg+xml"
+        assert entity._attr_image_last_updated is not None
+        assert entity._attr_image_last_updated.tzinfo is not None
 
-    def test_available_no_data(self) -> None:
-        entity = self._make_entity(coordinator_data=None)
-        assert entity.available is True
+    async def test_missing_areas_returns_none(self):
+        assert await _entity().async_image() is None
 
-    def test_available_with_areas(self) -> None:
-        areas = dict.fromkeys(TOOTH_AREA_NAMES, 50)
-        entity = self._make_entity({DATA_LAST_BRUSH_AREAS: areas, DATA_LAST_BRUSH_TIME: 1234567890})
-        assert entity.available is True
-
-    def test_unavailable_session_but_no_areas(self) -> None:
-        entity = self._make_entity({DATA_LAST_BRUSH_TIME: 1234567890})
+    async def test_no_coordinator_data_returns_none(self):
+        entity = _entity()
+        entity.coordinator.data = None
         assert entity.available is False
+        assert await entity.async_image() is None
 
-    @pytest.mark.asyncio
-    async def test_async_image_returns_none_without_data(self) -> None:
-        entity = self._make_entity(coordinator_data=None)
-        result = await entity.async_image()
-        assert result is None
+    async def test_image_bytes_are_cached(self):
+        entity = _entity(dict.fromkeys(TOOTH_AREA_NAMES, 10))
+        first = await entity.async_image()
+        assert first.startswith(b"<svg")
+        assert await entity.async_image() is first
 
-    @pytest.mark.asyncio
-    async def test_async_image_returns_svg_bytes(self) -> None:
-        areas = dict.fromkeys(TOOTH_AREA_NAMES, 100)
-        entity = self._make_entity({DATA_LAST_BRUSH_AREAS: areas})
-        result = await entity.async_image()
-        assert result is not None
-        assert result.startswith(b"<svg")
+    async def test_new_session_refreshes_even_when_zone_values_match(self):
+        entity = _entity(dict.fromkeys(TOOTH_AREA_NAMES, 10))
+        first = await entity.async_image()
+        before = entity._attr_image_last_updated
+        entity.coordinator.data[DATA_LAST_BRUSH_TIME] += 3600
+        entity._handle_coordinator_update()
+        assert entity._attr_image_last_updated > before
+        assert await entity.async_image() == first
+        assert await entity.async_image() is not first
 
-    @pytest.mark.asyncio
-    async def test_caching(self) -> None:
-        areas = dict.fromkeys(TOOTH_AREA_NAMES, 50)
-        entity = self._make_entity({DATA_LAST_BRUSH_AREAS: areas})
+    async def test_mutating_zone_dict_refreshes_cached_image(self):
+        areas = dict.fromkeys(TOOTH_AREA_NAMES, 10)
+        entity = _entity(areas)
+        first = await entity.async_image()
+        areas[TOOTH_AREA_NAMES[0]] = 0
+        assert await entity.async_image() != first
 
-        result1 = await entity.async_image()
-        result2 = await entity.async_image()
-        assert result1 is result2
+    async def test_missing_data_clears_old_image(self):
+        entity = _entity(dict.fromkeys(TOOTH_AREA_NAMES, 10))
+        await entity.async_image()
+        entity.coordinator.data.pop(DATA_LAST_BRUSH_AREAS)
+        entity._handle_coordinator_update()
+        assert await entity.async_image() is None
+        assert entity._attr_image_last_updated is None
+
+    async def test_setup_registers_image(self):
+        entity = _entity(dict.fromkeys(TOOTH_AREA_NAMES, 10))
+        hass = entity.coordinator.hass
+        hass.data = {"oclean_ble": {"test": entity.coordinator}}
+        entry = MagicMock(entry_id="test")
+        entry.data = {"mac_address": "AA:BB:CC:DD:EE:FF"}
+        add = MagicMock()
+        await async_setup_entry(hass, entry, add)
+        assert isinstance(add.call_args.args[0][0], OcleanBrushCoverageImage)

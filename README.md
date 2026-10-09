@@ -1,11 +1,12 @@
-# Oclean Toothbrush (unofficial) – Home Assistant Integration
+# Oclean Toothbrush – kamkilt fork for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/v/release/deniskie/ha-oclean-integration)](https://github.com/deniskie/ha-oclean-integration/releases)
-[![License](https://img.shields.io/github/license/deniskie/ha-oclean-integration)](LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/deniskie/ha-oclean-integration/tests.yaml?label=tests)](https://github.com/deniskie/ha-oclean-integration/actions)
-[![hassfest](https://img.shields.io/github/actions/workflow/status/deniskie/ha-oclean-integration/hassfest.yaml?label=hassfest)](https://github.com/deniskie/ha-oclean-integration/actions/workflows/hassfest.yaml)
-[![validate](https://img.shields.io/github/actions/workflow/status/deniskie/ha-oclean-integration/validate.yaml?label=validate)](https://github.com/deniskie/ha-oclean-integration/actions/workflows/validate.yaml)
+[![Fork](https://img.shields.io/badge/fork-kamkilt-blue)](https://github.com/kamkilt/ha-oclean-integration)
+[![Version](https://img.shields.io/badge/version-1.4.1-green)](custom_components/oclean_ble/manifest.json)
+[![License](https://img.shields.io/github/license/kamkilt/ha-oclean-integration)](LICENSE)
+[![Tests](https://img.shields.io/github/actions/workflow/status/kamkilt/ha-oclean-integration/tests.yaml?label=tests)](https://github.com/kamkilt/ha-oclean-integration/actions)
+[![hassfest](https://img.shields.io/github/actions/workflow/status/kamkilt/ha-oclean-integration/hassfest.yaml?label=hassfest)](https://github.com/kamkilt/ha-oclean-integration/actions/workflows/hassfest.yaml)
+[![validate](https://img.shields.io/github/actions/workflow/status/kamkilt/ha-oclean-integration/validate.yaml?label=validate)](https://github.com/kamkilt/ha-oclean-integration/actions/workflows/validate.yaml)
 
 > **Unofficial community integration.** This project is not affiliated with, endorsed by,
 > or connected to Oclean / Zhuhai Ice Bear Smart Home Technology Co., Ltd.
@@ -21,13 +22,45 @@ No cloud, no account, fully local.
 
 ---
 
+## This fork (v1.4.1)
+
+**This is [kamkilt’s fork](https://github.com/kamkilt/ha-oclean-integration).**
+Home Assistant and HACS display **Oclean Toothbrush (kamkilt fork)**. The options
+window shows **kamkilt fork v1.4.1**, and the startup log includes the fork name
+and installed version, making the installed build easy to identify.
+
+**To jest fork kamkilt.** W HASS szukaj nazwy **Oclean Toothbrush (kamkilt fork)**;
+w oknie konfiguracji zobaczysz również wersję **1.4.1**. Aktualizacja istniejącej
+instalacji: podmień cały katalog `/config/custom_components/oclean_ble/`, uruchom
+ponownie Home Assistant i użyj przycisku **Update Now** przy obudzonej szczoteczce.
+Zachowaj obecną konfigurację integracji. Łączenie sesji oraz historię stref włącz
+w jej opcjach; domyślnie są wyłączone. W HACS dodaj repozytorium **kamkilt**, aby
+kolejne aktualizacje pochodziły z tego forka.
+
+Based on [deniskie’s integration](https://github.com/deniskie/ha-oclean-integration),
+with packet-loss recovery for Elite Pro / ESPHome Bluetooth proxies and
+[PPP01’s feature work](https://github.com/PPP01/ha-oclean-integration): coverage
+image, named custom programmes, brushing events, session merging and zone history.
+The feature commits were adapted to the current upstream version.
+
+Incomplete multi-record `*B#` transfers are discarded. Previously a missing
+20-byte notification shifted record boundaries; replaying captured Elite Pro
+bytes reproduced a fictitious **2032-12-25 / 777 s** session. Complete transfers
+are now checked before any record is accepted, and independent Bluetooth
+characteristics have separate roles during reassembly. Invalid future session
+cursors and cached snapshots are cleared automatically on loading or polling,
+while device settings are preserved. A one-day timestamp tolerance accommodates
+existing device timezone differences. A later successful poll restores the data.
+The captured logs establish the decoding failure; they do not establish whether
+the original packet loss happened in the brush, radio link or proxy.
+
 ## Installation
 
 ### Option A – HACS (recommended)
 
 1. Open **HACS** in Home Assistant.
 2. Click **⋮ → Custom repositories**.
-3. Add `https://github.com/deniskie/ha-oclean-integration` as **Integration**.
+3. Add `https://github.com/kamkilt/ha-oclean-integration` as **Integration**.
 4. Search for **Oclean** and install.
 5. Restart Home Assistant.
 
@@ -40,12 +73,118 @@ No cloud, no account, fully local.
    ```
 3. Restart Home Assistant.
 
+### Updating an existing installation
+
+Replace the **entire** `custom_components/oclean_ble/` folder and restart Home
+Assistant. Keep the existing Oclean configuration entry. After restart, press
+**Update Now** with the toothbrush awake and close to the Bluetooth proxy.
+Replacing only the coordinator or image file will miss dependencies of the new
+features. Old erroneous rows already recorded by Home Assistant are not removed
+by this update; the integration repairs its own state and subsequent readings.
+
 ### Setup
 
 After restart, go to **Settings → Integrations → Add Integration** and search for **Oclean**.
 
 - If your brush is turned on and nearby, it may be **auto-discovered** via Bluetooth.
 - Otherwise, enter the **MAC address** manually (found in the official Oclean app under device settings).
+
+---
+
+## Added features
+
+### Coverage image
+
+Each device has an `image` entity named **Brush Coverage**, with upper and lower
+jaws and separate inner/outer tooth surfaces. Add it to a dashboard with a
+picture-entity card (replace the example entity ID with your device’s entity):
+
+```yaml
+type: picture-entity
+entity: image.oclean_brush_coverage
+show_name: true
+show_state: false
+```
+
+Colours show each zone’s contribution relative to the session average: green
+at least 75 %, orange at least 40 %, red above zero, grey zero. These are relative
+zone ratings; a uniformly short brushing session can still show green. The
+**Duration Rating** sensor reports whether the programme duration was reached.
+An image requires zone data supplied by the brush.
+
+### Named custom programmes
+
+Use **Developer tools → Actions → Oclean: Save custom programme** to create a
+programme shared by all configured toothbrushes. Up to **eight** steps are
+supported. Each has a gear (1–32 clean, 33–36 whitening, 37–40 massage, 41 extended)
+and a duration of 1–255 seconds. For example, this stores a 180-second programme:
+
+```yaml
+action: oclean_ble.save_custom_program
+data:
+  name: My 3-minute programme
+  steps:
+    - gear: 16
+      duration: 90
+    - gear: 20
+      duration: 90
+```
+
+Select it in the device’s **Brush Scheme** dropdown to send it to the brush. The
+save action can return its `pnum` when called with a response variable; allocated
+custom slots are 120–255. Delete a saved programme with
+`oclean_ble.delete_custom_program`, passing that `pnum`. This removes it from the
+Home Assistant catalogue. `oclean_ble.set_custom_scheme` can also send a step
+list directly to one device using `entry_id`, `pnum` (0–255) and `steps`.
+Programme support and persistence depend on the brush firmware; saving a name
+in Home Assistant is separate from writing it to a toothbrush.
+
+### Brushing events for automations
+
+Every newly received session fires `oclean_ble_brush_session` once, including
+older sessions received together in one poll. Event fields include `entry_id`,
+`mac`, `device_name`, `ts`, `duration`, `duration_scheduled`, `score`, `pnum`,
+`zones`, `zones_emoji`, `group_continuation` and `group_size`. Times and durations
+are in seconds; `ts` is the session timestamp, which may be historical.
+For example, an automation can listen with:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: oclean_ble_brush_session
+    event_data:
+      entry_id: YOUR_OCLEAN_CONFIG_ENTRY_ID
+```
+
+Repeated polls do not repeat events. Events and history keep a separate
+persisted cursor from Home Assistant statistics, so a disabled recorder does
+not create duplicate events.
+
+### Merge consecutive sessions
+
+In **Settings → Devices & services → Oclean → Configure**, set **Merge sessions**
+to 1–5 minutes (default 0, disabled). A second session starting within that gap
+from the preceding session’s end joins the group. The extra **Merged duration**
+sensor sums actual durations; **Merged score** sums individual firmware scores
+and caps the result at 100 %. This is an integration calculation, not a score
+recomputed by the Oclean firmware. Individual session readings remain available.
+
+### Zone history
+
+In the same options, enable **Zone history** with retention of 30, 60, 90, 180
+or 365 days, or unlimited (default off). New sessions with zone data are stored
+locally with timestamp, eight zone values, duration, score and programme number.
+Enabling history does not reimport sessions already processed by this installation.
+The action `oclean_ble.get_zone_history` returns sessions newest first and
+supports optional `start` / `end` date filters. To use its response in a script:
+
+```yaml
+sequence:
+  - action: oclean_ble.get_zone_history
+    data:
+      entry_id: YOUR_OCLEAN_CONFIG_ENTRY_ID
+    response_variable: brushing_history
+```
 
 ---
 
@@ -66,7 +205,7 @@ Entity IDs follow the pattern `<platform>.<device_name>_<suffix>` where `<device
 | Last Scheme | `_last_scheme` | Brushing programme used in the last session – human-readable name (e.g. "Clean", "Sensitive") from the pNum lookup table; falls back to the raw number if unknown | – | ✅ Tested |
 | Pressure | `_pressure` | Average brushing pressure across all tooth zones in the last session (raw ADC value 0–255) | – | ⚠️ Unconfirmed |
 | Coverage | `_coverage` | Percentage of tooth zones adequately cleaned in the last session (0–100 %). Uses the official Oclean app threshold: zones with raw pressure > 100 count as covered. | % | ✅ Tested |
-| Duration Rating | `_duration_rating` | How well the recommended brushing duration (240 s) was met (0–100 %, capped). Formula from the official Oclean app: `min(100, duration / 240 × 100)` | % | ⚠️ Unconfirmed |
+| Duration Rating | `_duration_rating` | Actual duration relative to the programme length recorded in that session: `min(100, actual / scheduled × 100)`. Falls back to 240 s only when the device does not provide a programme length | % | ⚠️ Unconfirmed |
 | Gesture | `_gesture` | Brushing technique indicator from the device (raw value 0–255 from byte 14 of 42-byte session records) | – | ⚠️ Unconfirmed |
 | Pressure Detail | `_pressure_detail` | Average of the 5-segment pressure ratio from 42-byte session records. Per-segment values available as entity attributes (`segment_1` … `segment_5`) | – | ⚠️ Unconfirmed |
 | Power Distribution | `_power_distribution` | Number of zones with power > 0 from per-zone power levels (0–3 scale). Per-zone values available as entity attributes (mapped to tooth area names), plus `gesture_array` | – | ⚠️ Unconfirmed |
@@ -148,7 +287,7 @@ Entity IDs follow the pattern `<platform>.<device_name>_<suffix>` where `<device
 | Brush head usage counter | Resets when the "Reset Brush Head" button is pressed |
 | Last brush pressure | Average brushing pressure across all tooth zones (extended 0308 format only) |
 | Last brush areas | Pressure per tooth zone; individual zones as entity attributes and as 8 dedicated sensors. Source: `2604` notifications on Type-1 devices (Oclean X series) or extended 0308 format on Type-0 devices |
-| Duration rating | Percentage of recommended 240 s brushing duration achieved (APK formula: `timeLong / 240`); calculated from session duration |
+| Duration rating | Actual brushing duration divided by the session’s scheduled programme duration, capped at 100 % (240 s fallback when unavailable) |
 | Brushing quality metrics | Gesture code, 5-segment pressure ratio, and per-zone power distribution (0–3 scale) from 42-byte session records; exposed as sensors with detail attributes |
 | Feature toggle switches | Brushing Reminder (CMD 0239) and Auto Power-Off Timer (CMD 0240); state persisted locally |
 | Brush head reset button | Sends reset command to device; no response verification yet |

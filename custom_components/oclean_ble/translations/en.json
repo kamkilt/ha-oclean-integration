@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Oclean Toothbrush (unofficial)",
+        "title": "Oclean Toothbrush (kamkilt fork)",
         "description": "Set up your Oclean Smart Toothbrush. Nearby devices will be listed automatically if Bluetooth is enabled."
       },
       "pick_device": {
@@ -186,7 +186,7 @@
   "options": {
     "step": {
       "init": {
-        "title": "Oclean Options",
+        "title": "Oclean — kamkilt fork v1.4.1",
         "data": {
           "poll_interval": "Poll interval (seconds)",
           "post_brush_cooldown": "Post-brush cooldown (hours)",
